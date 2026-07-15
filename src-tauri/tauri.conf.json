@@ -1,0 +1,63 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "GitSyncTools",
+  "version": "0.3.7",
+  "identifier": "com.katcc.lightsync",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "GitSyncTools",
+        "width": 920,
+        "height": 700,
+        "minWidth": 640,
+        "minHeight": 540,
+        "visible": false,
+        "dragDropEnabled": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "category": "Utility",
+    "publisher": "katcoo",
+    "copyright": "Copyright © 2026 katcoo",
+    "shortDescription": "使用私有 Git 仓库轻松同步文件",
+    "longDescription": "GitSyncTools 在 Windows 上发布文件，并在 macOS 上一键接收更新。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFQUQyNzBCRENGQ0Q1OTQKUldTVTFmemNDeWV0ampCcjl5YTVHaXlFczRoT2VhMnNmUEh5UEVsc1NwbkdaWU9UTjYvR3pBK3EK",
+      "endpoints": [
+        "https://github.com/katcuu/GitSyncTools/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
