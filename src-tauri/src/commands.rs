@@ -113,6 +113,29 @@ pub fn open_log_directory(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_sync_directory(app: AppHandle) -> Result<(), String> {
+    let runtime = RuntimePaths::from_app(&app)?;
+    let config = load_config(&runtime)?.ok_or_else(|| "请先完成仓库设置".to_string())?;
+    let directory = sync_directory_path(&runtime, &config)?;
+    fs::create_dir_all(&directory).map_err(|error| format!("无法创建同步目录：{error}"))?;
+    log::info!(
+        "operation=open_sync_directory role={:?} path=<sync-folder>",
+        config.role
+    );
+    crate::diagnostics::open_directory(&directory)
+}
+
+fn sync_directory_path(runtime: &RuntimePaths, config: &AppConfig) -> Result<PathBuf, String> {
+    match config.role {
+        DeviceRole::Sender => Ok(runtime.repository.join("files")),
+        DeviceRole::Receiver => config
+            .destination
+            .clone()
+            .ok_or_else(|| "接收端尚未设置同步目录".to_string()),
+    }
+}
+
+#[tauri::command]
 pub fn record_update_event(stage: String, detail: Option<String>, duration_ms: u64) {
     let valid_stage = stage
         .chars()
@@ -614,6 +637,35 @@ mod tests {
                 .cached_remote("https://example.com/repo.git", "dev")
                 .unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn resolves_sync_directory_for_each_role() {
+        let runtime = RuntimePaths {
+            root: PathBuf::from("app-data"),
+            repository: PathBuf::from("app-data/repository"),
+            config: PathBuf::from("app-data/config.json"),
+            state: PathBuf::from("app-data/state.json"),
+        };
+        let sender = AppConfig {
+            repository_url: "example".into(),
+            branch: "main".into(),
+            role: DeviceRole::Sender,
+            destination: None,
+        };
+        let receiver = AppConfig {
+            role: DeviceRole::Receiver,
+            destination: Some(PathBuf::from("received")),
+            ..sender.clone()
+        };
+        assert_eq!(
+            sync_directory_path(&runtime, &sender).unwrap(),
+            PathBuf::from("app-data/repository/files")
+        );
+        assert_eq!(
+            sync_directory_path(&runtime, &receiver).unwrap(),
+            PathBuf::from("received")
         );
     }
 }

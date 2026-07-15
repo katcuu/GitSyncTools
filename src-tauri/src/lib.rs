@@ -10,9 +10,9 @@ use std::path::PathBuf;
 
 use commands::{
     apply_pull, clear_last_error, configure_repository, delete_repository_files,
-    get_repository_snapshot, get_sync_status, get_update_proxy, open_log_directory, prepare_pull,
-    publish, record_update_event, refresh_repository, retry_pending_push, validate_connection,
-    AppState,
+    get_repository_snapshot, get_sync_status, get_update_proxy, open_log_directory,
+    open_sync_directory, prepare_pull, publish, record_update_event, refresh_repository,
+    retry_pending_push, validate_connection, AppState,
 };
 use std::sync::atomic::Ordering;
 use tauri::menu::{Menu, MenuItem};
@@ -40,9 +40,11 @@ fn create_tray(app: &tauri::App) -> Result<(), String> {
         .map_err(|error| format!("无法创建托盘菜单项：{error}"))?;
     let sync = MenuItem::with_id(app, "sync", "同步", true, None::<&str>)
         .map_err(|error| format!("无法创建托盘菜单项：{error}"))?;
+    let open_folder = MenuItem::with_id(app, "open_folder", "打开同步文件夹", true, None::<&str>)
+        .map_err(|error| format!("无法创建托盘菜单项：{error}"))?;
     let quit = MenuItem::with_id(app, "quit", "退出 GitSyncTools", true, None::<&str>)
         .map_err(|error| format!("无法创建托盘菜单项：{error}"))?;
-    let menu = Menu::with_items(app, &[&show, &sync, &quit])
+    let menu = Menu::with_items(app, &[&show, &sync, &open_folder, &quit])
         .map_err(|error| format!("无法创建托盘菜单：{error}"))?;
     let mut tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
@@ -51,6 +53,12 @@ fn create_tray(app: &tauri::App) -> Result<(), String> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main(app),
             "sync" => handle_tray_sync(app.clone()),
+            "open_folder" => {
+                if let Err(error) = commands::open_sync_directory(app.clone()) {
+                    notify(app, "GitSyncTools 无法打开同步文件夹", error);
+                    show_main(app);
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -194,6 +202,7 @@ pub fn run() {
             apply_pull,
             get_update_proxy,
             open_log_directory,
+            open_sync_directory,
             record_update_event
         ])
         .setup(|app| {

@@ -234,6 +234,8 @@ h1, h2, h3, p { margin: 0; }
 .update-feedback-close:hover { background: rgba(0, 0, 0, 0.06); }
 .workspace { width: min(960px, 100%); margin: 0 auto; padding: 34px 30px 24px; flex: 1; }
 .workspace-heading { justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+.workspace-heading > div:first-child { min-width: 0; flex: 1; }
+.workspace-heading-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
 .workspace-heading h2 { font-size: 22px; }
 .workspace-heading p { margin-top: 6px; max-width: 660px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #7b8680; font-size: 12px; }
 .status-pill { min-height: 28px; padding: 0 10px; border-radius: 14px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; white-space: nowrap; }

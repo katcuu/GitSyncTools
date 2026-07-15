@@ -9,7 +9,7 @@ function previewStatus(): SyncStatus {
   return {
     configured: previewConfig !== null,
     platform: "windows",
-    appVersion: "0.3.12",
+    appVersion: "0.3.13",
     config: previewConfig,
     phase: "idle",
     repositoryLoading: false,
@@ -55,6 +55,7 @@ export const api = {
     ? Promise.resolve()
     : invoke<void>("record_update_event", { stage, detail, durationMs: Math.max(0, Math.round(durationMs)) }),
   openLogDirectory: () => previewMode ? Promise.resolve() : invoke<void>("open_log_directory"),
+  openSyncDirectory: () => previewMode ? Promise.resolve() : invoke<void>("open_sync_directory"),
   repositorySnapshot: () => previewMode
     ? Promise.resolve(previewRepository())
     : invoke<RepositorySnapshot>("get_repository_snapshot"),

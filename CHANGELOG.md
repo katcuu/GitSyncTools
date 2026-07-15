@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.3.13] - 2026-07-15
+
+### 新增
+
+- Windows 发送端和 macOS 接收端主界面增加“打开同步文件夹”，直接使用资源管理器或 Finder 定位文件。
+- 两端系统托盘右键菜单增加“打开同步文件夹”，与主界面共用目录解析逻辑。
+- 增加根目录 `AGENTS.md` 和 `docs/PROJECT_CONTEXT.md`，记录架构、同步不变量、企业加密兼容、历史问题、测试发布流程以及跨电脑 AI 任务交接提示词。
+
 ## [0.3.12] - 2026-07-15
 
 ### 修复
@@ -171,7 +179,8 @@
 - Windows 发送端和 macOS 接收端的基础单向文件同步。
 - 文件清单、冲突检测、待推送重试和资源管理器右键入口。
 
-[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.12...HEAD
+[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.13...HEAD
+[0.3.13]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.13
 [0.3.12]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.12
 [0.3.11]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.11
 [0.3.10]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.10

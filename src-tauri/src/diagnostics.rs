@@ -143,7 +143,7 @@ fn open_log_file(path: &Path) -> std::io::Result<File> {
     OpenOptions::new().create(true).append(true).open(path)
 }
 
-fn open_directory(path: &Path) -> Result<(), String> {
+pub(crate) fn open_directory(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = Command::new("open");
@@ -169,7 +169,7 @@ fn open_directory(path: &Path) -> Result<(), String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|error| format!("无法打开日志目录：{error}"))?;
+        .map_err(|error| format!("无法打开目录：{error}"))?;
     Ok(())
 }
 

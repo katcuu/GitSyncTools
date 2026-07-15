@@ -1,7 +1,7 @@
 # GitSyncTools
 
 [![CI](https://github.com/katcuu/GitSyncTools/actions/workflows/ci.yml/badge.svg)](https://github.com/katcuu/GitSyncTools/actions/workflows/ci.yml)
-[![release](https://img.shields.io/badge/release-v0.3.12-176b4f)](https://github.com/katcuu/GitSyncTools/releases)
+[![release](https://img.shields.io/badge/release-v0.3.13-176b4f)](https://github.com/katcuu/GitSyncTools/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 GitSyncTools 是一个基于 Git 仓库的轻量级单向文件同步工具。Windows 发送端负责选择并发布文件，macOS 接收端负责把远端内容更新到固定目录。应用隐藏了 `commit`、`push`、`pull` 等 Git 细节，日常操作只需要“选择文件并同步”或“立即更新”。
@@ -16,6 +16,7 @@ GitSyncTools 是一个基于 Git 仓库的轻量级单向文件同步工具。Wi
 - macOS 接收端只修改应用管理过的路径，不删除无关文件。
 - 检测本地改动，并提供保留、备份、覆盖或取消更新等冲突处理方式。
 - 展示仓库中的文件数量、目录数量、总大小、路径和更新时间。
+- Windows 和 macOS 主界面及托盘菜单均可直接打开当前同步文件夹。
 - Windows 发送端和 macOS 接收端的仓库文件列表均支持多选、全选，并可批量删除同步文件或仓库原有文件。
 - 网络中断时保留待推送提交，支持后续重试。
 - 关闭主窗口后驻留系统托盘；Windows 和 macOS 均可从托盘右键菜单选择“同步”。发送端会刷新仓库信息，接收端会拉取并应用最新内容，遇到冲突时自动打开主窗口。
@@ -68,6 +69,10 @@ https://github.com/katcuu/GitSyncTools/releases/latest/download/latest.json
 ```
 
 GitHub Actions 在推送版本标签后构建 Windows x64 和 Apple Silicon macOS 安装包，生成统一的 `latest.json` 并创建 GitHub Release。安装包仍强制校验 Tauri 数字签名，签名私钥只保存在 GitHub Actions Secrets 中。更新请求默认使用系统代理设置以及 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 环境变量；文件同步使用的系统 Git 同样遵循 Git 自身和环境代理配置。详细发布流程见 [docs/RELEASE.md](docs/RELEASE.md)。
+
+## 使用 AI 在另一台电脑继续开发
+
+项目把长期上下文维护在根目录 [AGENTS.md](AGENTS.md) 和 [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md) 中，包括架构、同步不变量、企业加密兼容、历史问题、测试发布流程和可直接使用的新任务提示词。换电脑后克隆 GitHub 仓库，让新的 ChatGPT/Codex 任务先完整阅读这两个文件，即可在没有旧聊天记录的情况下继续开发。
 
 ## 仓库格式
 

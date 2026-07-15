@@ -1,6 +1,6 @@
 [package]
 name = "gitsynctools"
-version = "0.3.12"
+version = "0.3.13"
 description = "A lightweight one-way file sync application backed by Git"
 authors = ["katcoo"]
 edition = "2021"

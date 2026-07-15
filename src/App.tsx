@@ -467,6 +467,15 @@ function Sender({ status, repository, refresh, openSettings }: SenderProps) {
     }
   }
 
+  async function openSyncDirectory() {
+    setError(null);
+    try {
+      await api.openSyncDirectory();
+    } catch (reason) {
+      setError(errorText(reason));
+    }
+  }
+
   async function deleteRepositoryEntries(entries: RepositoryDeleteTarget[]): Promise<boolean> {
     setBusy(true);
     setError(null);
@@ -489,7 +498,12 @@ function Sender({ status, repository, refresh, openSettings }: SenderProps) {
     <AppFrame status={status} openSettings={openSettings}>
       <section className="workspace-heading">
         <div><h2>发送文件</h2><p>{status.config?.repositoryUrl}</p></div>
-        <StatusPill status={status} />
+        <div className="workspace-heading-actions">
+          <button className="button secondary small" disabled={busy} onClick={openSyncDirectory}>
+            <FolderOpen size={16} />打开同步文件夹
+          </button>
+          <StatusPill status={status} />
+        </div>
       </section>
 
       {status.pendingPush && (
@@ -684,6 +698,15 @@ function Receiver({ status, repository, refresh, openSettings }: ReceiverProps) 
     }
   }
 
+  async function openSyncDirectory() {
+    setError(null);
+    try {
+      await api.openSyncDirectory();
+    } catch (reason) {
+      setError(errorText(reason));
+    }
+  }
+
   async function deleteRepositoryEntries(entries: RepositoryDeleteTarget[]): Promise<boolean> {
     setBusy(true);
     setError(null);
@@ -706,7 +729,12 @@ function Receiver({ status, repository, refresh, openSettings }: ReceiverProps) 
     <AppFrame status={status} openSettings={openSettings}>
       <section className="workspace-heading">
         <div><h2>接收文件</h2><p>{status.config?.destination}</p></div>
-        <StatusPill status={status} />
+        <div className="workspace-heading-actions">
+          <button className="button secondary small" disabled={busy} onClick={openSyncDirectory}>
+            <FolderOpen size={16} />打开同步文件夹
+          </button>
+          <StatusPill status={status} />
+        </div>
       </section>
 
       {status.pendingPush && (
