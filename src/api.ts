@@ -9,7 +9,7 @@ function previewStatus(): SyncStatus {
   return {
     configured: previewConfig !== null,
     platform: "windows",
-    appVersion: "0.3.8",
+    appVersion: "0.3.9",
     config: previewConfig,
     phase: "idle",
     repositoryLoading: false,
@@ -50,6 +50,11 @@ function previewRepository(): RepositorySnapshot {
 export const api = {
   status: () => previewMode ? Promise.resolve(previewStatus()) : invoke<SyncStatus>("get_sync_status"),
   clearLastError: () => previewMode ? Promise.resolve() : invoke<void>("clear_last_error"),
+  updateProxy: () => previewMode ? Promise.resolve(null) : invoke<string | null>("get_update_proxy"),
+  recordUpdateEvent: (stage: string, detail: string | null, durationMs: number) => previewMode
+    ? Promise.resolve()
+    : invoke<void>("record_update_event", { stage, detail, durationMs: Math.max(0, Math.round(durationMs)) }),
+  openLogDirectory: () => previewMode ? Promise.resolve() : invoke<void>("open_log_directory"),
   repositorySnapshot: () => previewMode
     ? Promise.resolve(previewRepository())
     : invoke<RepositorySnapshot>("get_repository_snapshot"),

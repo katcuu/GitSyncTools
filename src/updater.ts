@@ -1,6 +1,7 @@
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
+import { api } from "./api";
 
 export type UpdatePhase =
   | "idle"
@@ -51,6 +52,7 @@ export async function checkAndInstallUpdate(
   preview: boolean,
   setState: (state: UpdateUiState) => void,
 ): Promise<void> {
+  const started = performance.now();
   setState({ phase: "checking", label: "正在检测" });
   if (preview) {
     setState({ phase: "latest", label: "已是最新版", detail: "当前版本已经是最新版本" });
@@ -58,8 +60,11 @@ export async function checkAndInstallUpdate(
   }
 
   try {
-    const update = await check({ timeout: 20_000 });
+    const proxy = await api.updateProxy();
+    await api.recordUpdateEvent("check_start", proxy ? "proxy=system" : "proxy=default", performance.now() - started);
+    const update = await check({ timeout: 20_000, proxy: proxy ?? undefined });
     if (!update) {
+      await api.recordUpdateEvent("check_latest", null, performance.now() - started);
       setState({ phase: "latest", label: "已是最新版", detail: "当前版本已经是最新版本" });
       return;
     }
@@ -69,6 +74,7 @@ export async function checkAndInstallUpdate(
       label: `发现 v${update.version}`,
       detail: update.body || `检测到 GitSyncTools ${update.version}`,
     });
+    await api.recordUpdateEvent("check_available", `version=${update.version}`, performance.now() - started);
     const notes = update.body?.trim().slice(0, 800);
     const accepted = await confirm(
       [`发现新版本 ${update.version}。`, notes, "是否立即下载并安装？"].filter(Boolean).join("\n\n"),
@@ -104,9 +110,12 @@ export async function checkAndInstallUpdate(
 
     setState({ phase: "downloading", label: "正在下载", detail: "正在获取更新包" });
     await update.downloadAndInstall(onDownload, { timeout: 10 * 60_000 });
+    await api.recordUpdateEvent("install_ready", `version=${update.version}`, performance.now() - started);
     setState({ phase: "installing", label: "正在安装", detail: "安装完成后应用将重新启动" });
     await relaunch();
   } catch (reason) {
+    const detail = reason instanceof Error ? reason.message : String(reason);
+    await api.recordUpdateEvent("error", detail, performance.now() - started).catch(() => undefined);
     setState({ phase: "error", label: "更新失败", detail: friendlyUpdateError(reason) });
   }
 }

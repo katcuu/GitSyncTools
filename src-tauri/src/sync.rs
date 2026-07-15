@@ -34,6 +34,7 @@ pub fn publish_files(
     state: &mut LocalState,
     paths: Vec<PathBuf>,
 ) -> Result<PublishResult, String> {
+    let _timer = crate::diagnostics::OperationTimer::new("publish_files");
     if config.role != DeviceRole::Sender {
         return Err("本机不是发送端".into());
     }
@@ -144,6 +145,7 @@ pub fn delete_repository_files(
     entries: Vec<RepositoryDeleteTarget>,
     expected_commit: Option<&str>,
 ) -> Result<PublishResult, String> {
+    let _timer = crate::diagnostics::OperationTimer::new("delete_repository_files");
     if state.pending_push {
         return Err("上次内容尚未上传，请先重新上传".into());
     }
@@ -169,7 +171,6 @@ pub fn delete_repository_files(
     let manifest = match try_load_manifest_from_commit(&repository, remote_commit) {
         Ok(manifest) => {
             materialize_commit_files(&repository, remote_commit, &manifest)?;
-            validate_manifest(&manifest, &repository.root().join("files"))?;
             Some(manifest)
         }
         Err(ManifestLoadError::Missing) => None,
@@ -365,6 +366,7 @@ pub fn retry_pending_push(
     config: &AppConfig,
     state: &mut LocalState,
 ) -> Result<PublishResult, String> {
+    let _timer = crate::diagnostics::OperationTimer::new("retry_pending_push");
     let commit = state
         .pending_commit
         .clone()
@@ -415,6 +417,7 @@ pub fn refresh_repository_snapshot(
     config: &AppConfig,
     state: &mut LocalState,
 ) -> Result<RepositorySnapshot, String> {
+    let _timer = crate::diagnostics::OperationTimer::new("refresh_repository_snapshot");
     if state.pending_push {
         return Err("存在尚未上传的内容，请先重新上传".into());
     }
@@ -548,6 +551,7 @@ pub fn prepare_pull_plan(
     config: &AppConfig,
     state: &mut LocalState,
 ) -> Result<PullPlan, String> {
+    let _timer = crate::diagnostics::OperationTimer::new("prepare_pull_plan");
     if config.role != DeviceRole::Receiver {
         return Err("本机不是接收端".into());
     }
@@ -559,7 +563,7 @@ pub fn prepare_pull_plan(
 
     let repository = GitRepository::new(runtime.repository.clone(), config)?;
     repository.ensure()?;
-    let Some(remote) = repository.remote_head()? else {
+    let Some(remote) = repository.sync_with_remote()? else {
         state.last_error = None;
         state.last_checked_at = Some(Utc::now().to_rfc3339());
         save_state(runtime, state)?;
@@ -571,7 +575,6 @@ pub fn prepare_pull_plan(
             message: "仓库暂无文件".into(),
         });
     };
-    repository.checkout_remote(&remote)?;
     let manifest = match try_load_manifest_from_commit(&repository, &remote) {
         Ok(manifest) => manifest,
         Err(ManifestLoadError::Missing) => {
@@ -590,7 +593,6 @@ pub fn prepare_pull_plan(
         Err(ManifestLoadError::Invalid(error)) => return Err(error),
     };
     materialize_commit_files(&repository, &remote, &manifest)?;
-    validate_manifest(&manifest, &repository.root().join("files"))?;
 
     let plan = compare_destination(destination, state, &manifest, &remote)?;
     state.last_error = None;
@@ -607,6 +609,7 @@ pub fn apply_pull_plan(
     expected_commit: &str,
     resolutions: &[ConflictResolution],
 ) -> Result<(), String> {
+    let _timer = crate::diagnostics::OperationTimer::new("apply_pull_plan");
     let plan = prepare_pull_plan(runtime, config, state)?;
     if plan.commit.as_deref() != Some(expected_commit) {
         return Err("远端在确认期间发生变化，请重新检查更新".into());
@@ -628,7 +631,6 @@ pub fn apply_pull_plan(
     let repository = GitRepository::new(runtime.repository.clone(), config)?;
     let manifest = load_manifest_from_commit(&repository, expected_commit)?;
     materialize_commit_files(&repository, expected_commit, &manifest)?;
-    validate_manifest(&manifest, &repository.root().join("files"))?;
     let desired: BTreeMap<String, ManifestEntry> = manifest
         .entries
         .iter()
@@ -1066,6 +1068,25 @@ fn materialize_commit_files(
 ) -> Result<(), String> {
     validate_manifest_metadata(manifest)?;
     let files_root = repository.root().join("files");
+    if validate_manifest(manifest, &files_root).is_ok() {
+        for entry in manifest
+            .entries
+            .iter()
+            .filter(|entry| entry.kind == ManifestKind::Directory)
+        {
+            let target = safe_join(&files_root, &entry.path)?;
+            fs::create_dir_all(&target).map_err(|error| format!("无法重建内部目录：{error}"))?;
+        }
+        log::info!(
+            "operation=materialize_commit_files mode=verified_worktree files={}",
+            manifest
+                .entries
+                .iter()
+                .filter(|entry| entry.kind == ManifestKind::File)
+                .count()
+        );
+        return Ok(());
+    }
     let materialized_root = repository
         .root()
         .join(format!(".gitsynctools-materialize-{}", Uuid::new_v4()));

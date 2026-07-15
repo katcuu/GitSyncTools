@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-07-15
+
+### 新增
+
+- 增加诊断日志模块，记录更新、同步、删除和 Git 子命令的结果与耗时；日志以两个 10 MB 文件循环存储，总量控制在约 20 MB。
+- 连接设置增加“打开日志目录”入口，便于问题发生后直接取得诊断信息。
+
+### 变更
+
+- macOS 更新检测自动读取环境变量和系统 HTTPS、HTTP、SOCKS 代理，并将代理显式传递给 Tauri 更新检测及下载流程。
+- 更新器改用操作系统原生 TLS 和系统证书信任，兼容安装了代理根证书的 macOS 环境。
+- 仓库同步通过一次 `fetch` 获取远端版本，减少远端发生变化时重复连接。
+- 复用已校验的内部 Git 工作区，避免逐文件执行 `git show`、重复哈希及重写；减少重复 Git 配置和文件列表子进程。
+
 ## [0.3.8] - 2026-07-15
 
 ### 新增
@@ -131,6 +145,7 @@
 - Windows 发送端和 macOS 接收端的基础单向文件同步。
 - 文件清单、冲突检测、待推送重试和资源管理器右键入口。
 
-[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.9
 [0.3.8]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.8
 [0.3.7]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.7

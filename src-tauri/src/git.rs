@@ -38,6 +38,7 @@ impl GitRepository {
     }
 
     pub fn inspect_connection(remote_url: &str, branch: &str) -> Result<RemoteInspection, String> {
+        let _timer = crate::diagnostics::OperationTimer::new("git_remote_inspection");
         if remote_url.trim().is_empty() {
             return Err("仓库地址不能为空".into());
         }
@@ -70,7 +71,6 @@ impl GitRepository {
             if configured.trim() != self.remote_url {
                 return Err("内部仓库与当前设置不一致，请重新保存连接设置".into());
             }
-            self.configure_identity()?;
             return Ok(());
         }
 
@@ -81,7 +81,7 @@ impl GitRepository {
         fs::create_dir_all(&self.root).map_err(|error| format!("无法创建内部仓库：{error}"))?;
         self.run(["init", "-b", self.branch.as_str()])?;
         self.run(["remote", "add", "origin", self.remote_url.as_str()])?;
-        self.configure_identity()
+        Ok(())
     }
 
     pub fn remote_head(&self) -> Result<Option<String>, String> {
@@ -117,16 +117,11 @@ impl GitRepository {
     }
 
     pub fn sync_with_remote(&self) -> Result<Option<String>, String> {
-        let remote = self.remote_head()?;
+        let remote = self.fetch_remote_head()?;
         match remote.as_deref() {
-            Some(commit) => {
-                let local = self.head()?;
-                if local.as_deref() != Some(commit) {
-                    self.checkout_remote(commit)?;
-                } else {
-                    self.run(["reset", "--hard", "HEAD"])?;
-                    self.run(["clean", "-fd", "--", "files", ".filesync"])?;
-                }
+            Some(_) => {
+                self.run(["reset", "--hard", "FETCH_HEAD"])?;
+                self.run(["clean", "-fd", "--", "files", ".filesync"])?;
             }
             None => {
                 if self.head()?.is_some() {
@@ -139,11 +134,31 @@ impl GitRepository {
         Ok(remote)
     }
 
+    fn fetch_remote_head(&self) -> Result<Option<String>, String> {
+        let output = self.run_raw([
+            "fetch",
+            "--depth=2",
+            "--no-tags",
+            "origin",
+            self.branch.as_str(),
+        ])?;
+        if output.status.success() {
+            return self.run(["rev-parse", "FETCH_HEAD"]).map(Some);
+        }
+        if self.remote_head()?.is_none() {
+            return Ok(None);
+        }
+        Err(command_error(&output, &self.remote_url))
+    }
+
     pub fn stage_all(&self) -> Result<(), String> {
         let mut arguments = collect_args(["add", "--all", "--"]);
+        let tracked = self.run(["ls-files", "--", "files", ".filesync", ".gitattributes"])?;
         for path in ["files", ".filesync", ".gitattributes"] {
-            let tracked = self.run(["ls-files", "--", path])?;
-            if self.root.join(path).exists() || !tracked.trim().is_empty() {
+            let tracked_path = tracked
+                .lines()
+                .any(|entry| entry == path || entry.starts_with(&format!("{path}/")));
+            if self.root.join(path).exists() || tracked_path {
                 arguments.push(OsString::from(path));
             }
         }
@@ -186,7 +201,15 @@ impl GitRepository {
     }
 
     pub fn commit(&self, message: &str) -> Result<String, String> {
-        self.run(["commit", "-m", message])?;
+        self.run([
+            "-c",
+            "user.name=katcoo",
+            "-c",
+            "user.email=katcoo@localhost",
+            "commit",
+            "-m",
+            message,
+        ])?;
         self.head()?
             .ok_or_else(|| "提交完成后无法读取版本号".into())
     }
@@ -243,12 +266,6 @@ impl GitRepository {
 
     pub fn root(&self) -> &Path {
         &self.root
-    }
-
-    fn configure_identity(&self) -> Result<(), String> {
-        self.run(["config", "user.name", "katcoo"])?;
-        self.run(["config", "user.email", "katcoo@localhost"])?;
-        Ok(())
     }
 
     fn run<I, S>(&self, args: I) -> Result<String, String>
@@ -310,7 +327,23 @@ where
     S: AsRef<OsStr>,
 {
     let args = collect_args(args);
-    git_command(cwd, &args).output().map_err(git_launch_error)
+    let command_name = git_operation(&args);
+    let started = Instant::now();
+    let result = git_command(cwd, &args).output().map_err(git_launch_error);
+    match &result {
+        Ok(output) => log::info!(
+            "operation=git command={} duration_ms={} exit_code={}",
+            command_name,
+            started.elapsed().as_millis(),
+            output.status.code().unwrap_or(-1)
+        ),
+        Err(_) => log::warn!(
+            "operation=git command={} duration_ms={} result=launch_error",
+            command_name,
+            started.elapsed().as_millis()
+        ),
+    }
+    result
 }
 
 fn run_git_with_timeout<I, S>(
@@ -323,13 +356,23 @@ where
     S: AsRef<OsStr>,
 {
     let args = collect_args(args);
+    let command_name = git_operation(&args);
     let mut command = git_command(cwd, &args);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(git_launch_error)?;
     let started = Instant::now();
     loop {
         match child.try_wait().map_err(git_launch_error)? {
-            Some(_) => return child.wait_with_output().map_err(git_launch_error),
+            Some(_) => {
+                let output = child.wait_with_output().map_err(git_launch_error)?;
+                log::info!(
+                    "operation=git command={} duration_ms={} exit_code={}",
+                    command_name,
+                    started.elapsed().as_millis(),
+                    output.status.code().unwrap_or(-1)
+                );
+                return Ok(output);
+            }
             None if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -341,6 +384,14 @@ where
             None => thread::sleep(Duration::from_millis(50)),
         }
     }
+}
+
+fn git_operation(args: &[OsString]) -> String {
+    args.iter()
+        .map(|value| value.to_string_lossy())
+        .find(|value| !value.starts_with('-') && !value.contains('='))
+        .map(|value| value.into_owned())
+        .unwrap_or_else(|| "unknown".into())
 }
 
 fn collect_args<I, S>(args: I) -> Vec<OsString>

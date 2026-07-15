@@ -348,6 +348,9 @@ function Setup({ status, onSaved, onCancel }: SetupProps) {
         {connectionMessage && <div className="inline-success"><Check size={17} /><span>{connectionMessage}</span></div>}
 
         <div className="form-actions">
+          <button className="button secondary" disabled={busy} onClick={() => api.openLogDirectory().catch((reason) => setError(errorText(reason)))}>
+            <FolderOpen size={17} />打开日志目录
+          </button>
           {onCancel && <button className="button secondary" onClick={onCancel}>取消</button>}
           <button className="button secondary" disabled={busy || !repositoryUrl.trim()} onClick={validate}>
             {busyAction === "validate" ? <LoaderCircle className="spin" size={17} /> : <ShieldAlert size={17} />}{busyAction === "validate" ? "检测中" : "检测连接"}

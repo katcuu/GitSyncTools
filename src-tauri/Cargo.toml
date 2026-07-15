@@ -1,6 +1,6 @@
 [package]
 name = "gitsynctools"
-version = "0.3.8"
+version = "0.3.9"
 description = "A lightweight one-way file sync application backed by Git"
 authors = ["katcoo"]
 edition = "2021"
@@ -15,6 +15,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 dunce = "1"
+log = "0.4"
+reqwest = { version = "0.13", default-features = false, features = ["socks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -23,7 +25,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
-tauri-plugin-updater = "2"
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 walkdir = "2"
 

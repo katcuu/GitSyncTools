@@ -1,6 +1,8 @@
 mod commands;
+mod diagnostics;
 mod git;
 mod model;
+mod proxy;
 mod storage;
 mod sync;
 
@@ -8,8 +10,9 @@ use std::path::PathBuf;
 
 use commands::{
     apply_pull, clear_last_error, configure_repository, delete_repository_files,
-    get_repository_snapshot, get_sync_status, prepare_pull, publish, refresh_repository,
-    retry_pending_push, validate_connection, AppState,
+    get_repository_snapshot, get_sync_status, get_update_proxy, open_log_directory, prepare_pull,
+    publish, record_update_event, refresh_repository, retry_pending_push, validate_connection,
+    AppState,
 };
 use std::sync::atomic::Ordering;
 use tauri::menu::{Menu, MenuItem};
@@ -188,9 +191,15 @@ pub fn run() {
             delete_repository_files,
             retry_pending_push,
             prepare_pull,
-            apply_pull
+            apply_pull,
+            get_update_proxy,
+            open_log_directory,
+            record_update_event
         ])
         .setup(|app| {
+            if let Err(error) = diagnostics::init(app.handle()) {
+                eprintln!("failed to initialize diagnostics: {error}");
+            }
             if let Err(error) = commands::clear_startup_error(app.handle()) {
                 eprintln!("failed to clear stale startup error: {error}");
             }

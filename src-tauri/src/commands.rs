@@ -103,6 +103,36 @@ pub fn clear_startup_error(app: &AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn get_update_proxy() -> Option<String> {
+    crate::proxy::update_proxy()
+}
+
+#[tauri::command]
+pub fn open_log_directory(app: AppHandle) -> Result<(), String> {
+    crate::diagnostics::open_log_directory(&app)
+}
+
+#[tauri::command]
+pub fn record_update_event(stage: String, detail: Option<String>, duration_ms: u64) {
+    let valid_stage = stage
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '_');
+    if !valid_stage || stage.len() > 40 {
+        return;
+    }
+    let detail = detail
+        .as_deref()
+        .map(crate::diagnostics::safe_detail)
+        .unwrap_or_default();
+    log::info!(
+        "operation=software_update stage={} duration_ms={} detail={}",
+        stage,
+        duration_ms,
+        detail
+    );
+}
+
+#[tauri::command]
 pub fn get_repository_snapshot(
     app: AppHandle,
     shared: State<'_, AppState>,
