@@ -1,5 +1,6 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -252,6 +253,15 @@ impl GitRepository {
         }
     }
 
+    pub fn smudge_lfs_pointer(&self, pointer: &[u8]) -> Result<Vec<u8>, String> {
+        run_git_with_input(
+            Some(&self.root),
+            ["lfs", "smudge"],
+            pointer,
+            &self.remote_url,
+        )
+    }
+
     pub fn list_tree_files(&self, commit: &str) -> Result<Vec<GitTreeFile>, String> {
         let output = self.run_raw(["ls-tree", "-r", "-l", "-z", "--full-tree", commit, "--"])?;
         if !output.status.success() {
@@ -344,6 +354,45 @@ where
         ),
     }
     result
+}
+
+fn run_git_with_input<I, S>(
+    cwd: Option<&Path>,
+    args: I,
+    input: &[u8],
+    secret: &str,
+) -> Result<Vec<u8>, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let args = collect_args(args);
+    let command_name = git_operation(&args);
+    let started = Instant::now();
+    let mut command = git_command(cwd, &args);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(git_launch_error)?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "无法写入 Git LFS 输入".to_string())?
+        .write_all(input)
+        .map_err(|error| format!("无法写入 Git LFS 输入：{error}"))?;
+    let output = child.wait_with_output().map_err(git_launch_error)?;
+    log::info!(
+        "operation=git command={} duration_ms={} exit_code={}",
+        command_name,
+        started.elapsed().as_millis(),
+        output.status.code().unwrap_or(-1)
+    );
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(command_error(&output, secret))
+    }
 }
 
 fn run_git_with_timeout<I, S>(

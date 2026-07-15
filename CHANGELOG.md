@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-07-15
+
+### 修复
+
+- 发送端允许用户明确重新选择同名文件或文件夹来替换旧提交中与清单不一致的坏 blob，使 v0.3.7 及更早版本产生的异常提交可以被重新发布修复。
+- 识别标准 Git LFS 指针；macOS 安装了 Git LFS 时尝试自动下载并校验原文件，失败时提供明确的重传操作提示。
+- 对象校验失败时记录清单期望大小与 SHA-256、Git blob 大小与 SHA-256、对象类型、checkout 文件状态和恢复结果。
+- 应用层错误写入诊断日志，不再只记录 Git 命令成功退出而遗漏后续清单校验错误。
+
 ## [0.3.9] - 2026-07-15
 
 ### 新增
@@ -145,7 +154,8 @@
 - Windows 发送端和 macOS 接收端的基础单向文件同步。
 - 文件清单、冲突检测、待推送重试和资源管理器右键入口。
 
-[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.10...HEAD
+[0.3.10]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.10
 [0.3.9]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.9
 [0.3.8]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.8
 [0.3.7]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.7

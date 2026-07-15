@@ -551,6 +551,10 @@ fn remember_error(runtime: &RuntimePaths, config: &AppConfig, state: &mut LocalS
     if let Some(destination) = &config.destination {
         sanitized = sanitized.replace(&destination.to_string_lossy().to_string(), "<sync-folder>");
     }
+    log::warn!(
+        "operation=application_error detail={}",
+        crate::diagnostics::safe_detail(&sanitized)
+    );
     state.last_error = Some(sanitized);
     let _ = save_state(runtime, state);
 }

@@ -1326,7 +1326,7 @@ dependencies = [
 
 [[package]]
 name = "gitsynctools"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "chrono",
  "dunce",

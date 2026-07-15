@@ -28,6 +28,12 @@ enum ManifestLoadError {
     Invalid(String),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct LfsPointer {
+    oid: String,
+    size: u64,
+}
+
 pub fn publish_files(
     runtime: &RuntimePaths,
     config: &AppConfig,
@@ -57,7 +63,16 @@ pub fn publish_files(
     if let Some(commit) = remote_before.as_deref() {
         match try_load_manifest_from_commit(&repository, commit) {
             Ok(remote_manifest) => {
-                materialize_commit_files(&repository, commit, &remote_manifest)?;
+                let replacement_roots: BTreeSet<String> = sources
+                    .iter()
+                    .map(|source| source.name.to_lowercase())
+                    .collect();
+                materialize_commit_files_with_replacements(
+                    &repository,
+                    commit,
+                    &remote_manifest,
+                    &replacement_roots,
+                )?;
             }
             Err(ManifestLoadError::Missing) => initializing_existing_repository = true,
             Err(ManifestLoadError::Invalid(error)) => return Err(error),
@@ -1066,6 +1081,15 @@ fn materialize_commit_files(
     commit: &str,
     manifest: &Manifest,
 ) -> Result<(), String> {
+    materialize_commit_files_with_replacements(repository, commit, manifest, &BTreeSet::new())
+}
+
+fn materialize_commit_files_with_replacements(
+    repository: &GitRepository,
+    commit: &str,
+    manifest: &Manifest,
+    replacement_roots: &BTreeSet<String>,
+) -> Result<(), String> {
     validate_manifest_metadata(manifest)?;
     let files_root = repository.root().join("files");
     if validate_manifest(manifest, &files_root).is_ok() {
@@ -1116,18 +1140,90 @@ fn materialize_commit_files(
                 && Some(object_hash.as_str()) == entry.sha256.as_deref()
             {
                 object_bytes
+            } else if replacement_roots.iter().any(|root| {
+                let path = entry.path.to_lowercase();
+                path == *root || path.starts_with(&format!("{root}/"))
+            }) {
+                log::warn!(
+                    "operation=manifest_mismatch path={} recovery=selected_source_replacement object_size={} expected_size={}",
+                    entry.path,
+                    object_bytes.len(),
+                    entry.size
+                );
+                object_bytes
             } else {
                 let checked_out = safe_join(&files_root, &entry.path)?;
-                reject_link(&checked_out)?;
-                let checked_out_bytes = fs::read(&checked_out)
-                    .map_err(|_| format!("Git 对象与清单不一致：{}", entry.path))?;
-                let checked_out_hash = hash_bytes(&checked_out_bytes);
-                if checked_out_bytes.len() as u64 != entry.size
-                    || Some(checked_out_hash.as_str()) != entry.sha256.as_deref()
-                {
-                    return Err(format!("Git 对象与清单不一致：{}", entry.path));
+                let checked_out_bytes = if checked_out.exists() {
+                    reject_link(&checked_out)?;
+                    fs::read(&checked_out).ok()
+                } else {
+                    None
+                };
+                let checked_out_hash = checked_out_bytes.as_deref().map(hash_bytes);
+                let checkout_valid = checked_out_bytes.as_ref().is_some_and(|bytes| {
+                    bytes.len() as u64 == entry.size
+                        && checked_out_hash.as_deref() == entry.sha256.as_deref()
+                });
+                let lfs_pointer = parse_lfs_pointer(&object_bytes);
+                log::warn!(
+                    "operation=manifest_mismatch path={} expected_size={} expected_sha256={} object_size={} object_sha256={} object_kind={} checkout_size={} checkout_sha256={} checkout_valid={}",
+                    entry.path,
+                    entry.size,
+                    entry.sha256.as_deref().unwrap_or("missing"),
+                    object_bytes.len(),
+                    object_hash,
+                    if lfs_pointer.is_some() { "lfs_pointer" } else { "blob" },
+                    checked_out_bytes.as_ref().map(Vec::len).unwrap_or(0),
+                    checked_out_hash.as_deref().unwrap_or("missing"),
+                    checkout_valid
+                );
+                if checkout_valid {
+                    checked_out_bytes.unwrap_or_default()
+                } else if let Some(pointer) = lfs_pointer.filter(|pointer| {
+                    pointer.size == entry.size
+                        && Some(pointer.oid.as_str()) == entry.sha256.as_deref()
+                }) {
+                    match repository.smudge_lfs_pointer(&object_bytes) {
+                        Ok(recovered)
+                            if recovered.len() as u64 == pointer.size
+                                && hash_bytes(&recovered) == pointer.oid =>
+                        {
+                            log::info!(
+                                "operation=manifest_mismatch path={} recovery=git_lfs_success",
+                                entry.path
+                            );
+                            recovered
+                        }
+                        Ok(recovered) => {
+                            log::warn!(
+                                "operation=manifest_mismatch path={} recovery=git_lfs_invalid recovered_size={} recovered_sha256={}",
+                                entry.path,
+                                recovered.len(),
+                                hash_bytes(&recovered)
+                            );
+                            return Err(format!(
+                                "Git LFS 未能还原文件：{}。请在 Windows 发送端使用 GitSyncTools v0.3.8 或更高版本重新同步该文件",
+                                entry.path
+                            ));
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                "operation=manifest_mismatch path={} recovery=git_lfs_failed detail={}",
+                                entry.path,
+                                crate::diagnostics::safe_detail(&error)
+                            );
+                            return Err(format!(
+                                "远端文件是 Git LFS 指针，但 macOS 无法还原：{}。请安装 Git LFS 后重试，或在 Windows 发送端使用 GitSyncTools v0.3.8 或更高版本重新同步该文件",
+                                entry.path
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(format!(
+                        "Git 对象与清单不一致：{}。远端旧提交中没有可校验的原文件，请在 Windows 发送端重新同步该文件",
+                        entry.path
+                    ));
                 }
-                checked_out_bytes
             };
             let target = safe_join(&materialized_root, &entry.path)?;
             atomic_write_bytes(&bytes, &target)?;
@@ -1192,6 +1288,31 @@ fn validate_staged_manifest(repository: &GitRepository, manifest: &Manifest) -> 
         }
     }
     Ok(())
+}
+
+fn parse_lfs_pointer(bytes: &[u8]) -> Option<LfsPointer> {
+    if bytes.len() > 1024 {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes).ok()?;
+    if !text
+        .lines()
+        .any(|line| line.trim() == "version https://git-lfs.github.com/spec/v1")
+    {
+        return None;
+    }
+    let oid = text.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("oid sha256:")
+            .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .map(str::to_owned)
+    })?;
+    let size = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("size "))?
+        .parse()
+        .ok()?;
+    Some(LfsPointer { oid, size })
 }
 
 fn validate_manifest_metadata(manifest: &Manifest) -> Result<(), String> {
@@ -1463,6 +1584,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_standard_git_lfs_pointer() {
+        let oid = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        let pointer =
+            format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize 5\n");
+        assert_eq!(
+            parse_lfs_pointer(pointer.as_bytes()),
+            Some(LfsPointer {
+                oid: oid.into(),
+                size: 5,
+            })
+        );
+        assert!(parse_lfs_pointer(b"ordinary file").is_none());
+    }
+
+    #[test]
     fn detects_modified_local_file() {
         let root = tempdir().unwrap();
         let path = root.path().join("note.txt");
@@ -1578,6 +1714,66 @@ mod tests {
         materialize_commit_files(&repository, &commit, &manifest).unwrap();
         assert_eq!(
             fs::read(files_root.join("document.docx")).unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn publish_repairs_corrupt_selected_file_from_legacy_commit() {
+        let temp = tempdir().unwrap();
+        let remote = temp.path().join("remote.git");
+        let init = Command::new("git")
+            .args(["init", "--bare", "--initial-branch=main"])
+            .arg(&remote)
+            .output()
+            .unwrap();
+        assert!(init.status.success());
+
+        let runtime = runtime(&temp.path().join("sender-data"));
+        fs::create_dir_all(&runtime.root).unwrap();
+        let config = AppConfig {
+            repository_url: remote.to_string_lossy().into_owned(),
+            branch: "main".into(),
+            role: DeviceRole::Sender,
+            destination: None,
+        };
+        let repository = GitRepository::new(runtime.repository.clone(), &config).unwrap();
+        repository.ensure().unwrap();
+
+        let source = temp.path().join("document.docx");
+        let original = b"PK\x03\x04original document bytes";
+        fs::write(&source, original).unwrap();
+        let desired = temp.path().join("desired");
+        fs::create_dir_all(&desired).unwrap();
+        fs::write(desired.join("document.docx"), original).unwrap();
+        let manifest = build_manifest(&desired, None).unwrap();
+
+        let files_root = runtime.repository.join("files");
+        fs::create_dir_all(&files_root).unwrap();
+        fs::write(
+            files_root.join("document.docx"),
+            b"PK\x03\x04filtered bytes",
+        )
+        .unwrap();
+        let metadata_root = runtime.repository.join(".filesync");
+        fs::create_dir_all(&metadata_root).unwrap();
+        write_json_atomic(&metadata_root.join("manifest.json"), &manifest).unwrap();
+        fs::write(
+            runtime.repository.join(".gitattributes"),
+            "/files/** -text\n",
+        )
+        .unwrap();
+        repository.stage_all().unwrap();
+        repository.commit("Legacy corrupt commit").unwrap();
+        repository.push_head().unwrap();
+
+        let result =
+            publish_files(&runtime, &config, &mut LocalState::default(), vec![source]).unwrap();
+        assert!(!result.pending_push);
+        assert_eq!(
+            repository
+                .read_blob(result.commit.as_deref().unwrap(), "files/document.docx")
+                .unwrap(),
             original
         );
     }
