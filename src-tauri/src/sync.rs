@@ -109,11 +109,11 @@ pub fn publish_files(
     }
 
     repository.stage_all()?;
-    if validate_or_repair_staged_manifest(&repository, &mut manifest, &sources)? {
+    if reconcile_manifest_with_staged(&repository, &mut manifest, old_manifest.as_ref())? {
         write_json_atomic(&manifest_path, &manifest)?;
         repository.stage_paths(&[".filesync/manifest.json".into()])?;
-        validate_or_repair_staged_manifest(&repository, &mut manifest, &sources)?;
     }
+    validate_staged_manifest(&repository, &manifest)?;
     if !repository.has_staged_changes()? {
         state.last_error = None;
         state.last_remote_commit = remote_before;
@@ -1274,13 +1274,19 @@ fn validate_manifest(manifest: &Manifest, files_root: &Path) -> Result<(), Strin
     Ok(())
 }
 
-fn validate_or_repair_staged_manifest(
+fn reconcile_manifest_with_staged(
     repository: &GitRepository,
     manifest: &mut Manifest,
-    sources: &[ValidatedSource],
+    old_manifest: Option<&Manifest>,
 ) -> Result<bool, String> {
     validate_manifest_metadata(manifest)?;
-    let mut repaired = false;
+    let old_entries: BTreeMap<&str, &ManifestEntry> = old_manifest
+        .into_iter()
+        .flat_map(|manifest| manifest.entries.iter())
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect();
+    let now = Utc::now().to_rfc3339();
+    let mut changed = false;
     for entry in manifest
         .entries
         .iter_mut()
@@ -1289,65 +1295,51 @@ fn validate_or_repair_staged_manifest(
         let repository_path = format!("files/{}", entry.path);
         let staged = repository.read_staged_blob(&repository_path)?;
         let staged_hash = hash_bytes(&staged);
-        if staged.len() as u64 == entry.size
-            && Some(staged_hash.as_str()) == entry.sha256.as_deref()
-        {
+        let staged_size = staged.len() as u64;
+        if staged_size == entry.size && Some(staged_hash.as_str()) == entry.sha256.as_deref() {
             continue;
         }
-        log::warn!(
-            "operation=staged_manifest_mismatch path={} expected_size={} expected_sha256={} staged_size={} staged_sha256={}",
+        log::info!(
+            "operation=staged_content_transformed path={} worktree_size={} worktree_sha256={} staged_size={} staged_sha256={} canonical=git_index",
             entry.path,
             entry.size,
             entry.sha256.as_deref().unwrap_or("missing"),
-            staged.len(),
+            staged_size,
             staged_hash
         );
-        let Some(source_path) = selected_source_path(&entry.path, sources) else {
-            return Err(format!(
-                "Git 暂存对象与原文件不一致：{}，且本次没有选择对应源文件",
-                entry.path
-            ));
-        };
-        reject_link(&source_path)?;
-        let source = fs::read(&source_path)
-            .map_err(|error| format!("无法重新读取所选源文件 {}：{error}", entry.path))?;
-        if source.len() as u64 > MAX_FILE_SIZE {
-            return Err(format!("{} 超过 50MB 限制", entry.path));
-        }
-        let source_hash = hash_bytes(&source);
-        repository.stage_raw_blob(&repository_path, &source)?;
-        let repaired_blob = repository.read_staged_blob(&repository_path)?;
-        if repaired_blob != source {
-            return Err(format!("无法将源文件原始字节写入 Git 索引：{}", entry.path));
-        }
-        entry.size = source.len() as u64;
-        entry.sha256 = Some(source_hash.clone());
-        entry.updated_at = Utc::now().to_rfc3339();
-        repaired = true;
-        log::info!(
-            "operation=staged_manifest_mismatch path={} recovery=raw_git_object_success source_size={} source_sha256={}",
-            entry.path,
-            source.len(),
-            source_hash
-        );
+        entry.size = staged_size;
+        entry.sha256 = Some(staged_hash.clone());
+        entry.updated_at = old_entries
+            .get(entry.path.as_str())
+            .filter(|old| {
+                old.kind == ManifestKind::File
+                    && old.size == staged_size
+                    && old.sha256.as_deref() == Some(staged_hash.as_str())
+            })
+            .map(|old| old.updated_at.clone())
+            .unwrap_or_else(|| now.clone());
+        changed = true;
     }
-    Ok(repaired)
+    Ok(changed)
 }
 
-fn selected_source_path(path: &str, sources: &[ValidatedSource]) -> Option<PathBuf> {
-    let mut parts = path.split('/');
-    let root = parts.next()?;
-    let source = sources
+fn validate_staged_manifest(repository: &GitRepository, manifest: &Manifest) -> Result<(), String> {
+    validate_manifest_metadata(manifest)?;
+    for entry in manifest
+        .entries
         .iter()
-        .find(|source| source.name.to_lowercase() == root.to_lowercase())?;
-    if source.source.is_file() {
-        return parts.next().is_none().then(|| source.source.clone());
+        .filter(|entry| entry.kind == ManifestKind::File)
+    {
+        let repository_path = format!("files/{}", entry.path);
+        let staged = repository.read_staged_blob(&repository_path)?;
+        let staged_hash = hash_bytes(&staged);
+        if staged.len() as u64 != entry.size
+            || Some(staged_hash.as_str()) != entry.sha256.as_deref()
+        {
+            return Err(format!("Git 暂存对象与同步清单不一致：{}", entry.path));
+        }
     }
-    let mut selected = source.source.clone();
-    for part in parts {
-        selected.push(part);
-    }
-    Some(selected)
+    Ok(())
 }
 
 fn parse_lfs_pointer(bytes: &[u8]) -> Option<LfsPointer> {
@@ -1674,7 +1666,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_bypasses_high_priority_clean_filter_for_selected_source() {
+    fn publish_manifest_tracks_git_processed_content_for_all_file_types() {
         let temp = tempdir().unwrap();
         let remote = temp.path().join("remote.git");
         let init = Command::new("git")
@@ -1697,7 +1689,7 @@ mod tests {
 
         fs::write(
             runtime.repository.join(".git/info/attributes"),
-            "*.docx filter=mutate\n",
+            "*.docx filter=mutate\n*.bin filter=mutate\n",
         )
         .unwrap();
         for args in [
@@ -1716,15 +1708,45 @@ mod tests {
             assert!(output.status.success());
         }
 
-        let source = temp.path().join("document.docx");
-        let contents = b"PK\x03\x04office document bytes\r\n";
-        fs::write(&source, contents).unwrap();
+        let source = temp.path().join("selected");
+        fs::create_dir(&source).unwrap();
+        let document = b"PK\x03\x04office document bytes\r\n";
+        let binary = b"arbitrary binary bytes\0\x01\x02";
+        fs::write(source.join("document.docx"), document).unwrap();
+        fs::write(source.join("payload.bin"), binary).unwrap();
         let result =
             publish_files(&runtime, &config, &mut LocalState::default(), vec![source]).unwrap();
-        let committed = repository
-            .read_blob(result.commit.as_deref().unwrap(), "files/document.docx")
+        let commit = result.commit.as_deref().unwrap();
+        let committed_document = repository
+            .read_blob(commit, "files/selected/document.docx")
             .unwrap();
-        assert_eq!(committed, contents);
+        let committed_binary = repository
+            .read_blob(commit, "files/selected/payload.bin")
+            .unwrap();
+        assert_ne!(committed_document, document);
+        assert_ne!(committed_binary, binary);
+
+        let manifest: Manifest = serde_json::from_slice(
+            &repository
+                .read_blob(commit, ".filesync/manifest.json")
+                .unwrap(),
+        )
+        .unwrap();
+        for (path, contents) in [
+            ("selected/document.docx", committed_document),
+            ("selected/payload.bin", committed_binary),
+        ] {
+            let entry = manifest
+                .entries
+                .iter()
+                .find(|entry| entry.path == path)
+                .unwrap();
+            assert_eq!(entry.size, contents.len() as u64);
+            assert_eq!(
+                entry.sha256.as_deref(),
+                Some(hash_bytes(&contents).as_str())
+            );
+        }
     }
 
     #[test]

@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [0.3.12] - 2026-07-15
+
+### 修复
+
+- 恢复通过标准 `git add` 暂存同步文件，使 Windows 企业加密/DLP 软件能够按系统既有规则为 `git.exe` 提供解密后的文件内容；适用于所有文件类型。
+- 文件经过系统或 Git 处理后，以 Git 索引中的最终 blob 作为同步内容真值，并据此更新清单的大小和 SHA-256，保证 macOS 收到的文件与清单一致。
+- 移除 0.3.11 引入的原始字节直接写入 Git 索引逻辑；该逻辑会绕过依赖进程识别的透明解密软件。
+- 增加 `staged_content_transformed` 诊断日志，记录工作区与 Git 暂存对象处理前后的大小和哈希。
+
 ## [0.3.11] - 2026-07-15
 
 ### 修复
@@ -162,7 +171,8 @@
 - Windows 发送端和 macOS 接收端的基础单向文件同步。
 - 文件清单、冲突检测、待推送重试和资源管理器右键入口。
 
-[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.11...HEAD
+[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.12...HEAD
+[0.3.12]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.12
 [0.3.11]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.11
 [0.3.10]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.10
 [0.3.9]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.9

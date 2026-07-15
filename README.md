@@ -1,7 +1,7 @@
 # GitSyncTools
 
 [![CI](https://github.com/katcuu/GitSyncTools/actions/workflows/ci.yml/badge.svg)](https://github.com/katcuu/GitSyncTools/actions/workflows/ci.yml)
-[![release](https://img.shields.io/badge/release-v0.3.11-176b4f)](https://github.com/katcuu/GitSyncTools/releases)
+[![release](https://img.shields.io/badge/release-v0.3.12-176b4f)](https://github.com/katcuu/GitSyncTools/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 GitSyncTools 是一个基于 Git 仓库的轻量级单向文件同步工具。Windows 发送端负责选择并发布文件，macOS 接收端负责把远端内容更新到固定目录。应用隐藏了 `commit`、`push`、`pull` 等 Git 细节，日常操作只需要“选择文件并同步”或“立即更新”。
