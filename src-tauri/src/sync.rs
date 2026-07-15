@@ -73,7 +73,7 @@ pub fn publish_files(
     fs::create_dir_all(&metadata_root).map_err(|error| format!("无法创建清单目录：{error}"))?;
     fs::write(
         repository.root().join(".gitattributes"),
-        "/files/** -text\n",
+        "/files/** binary -filter\n",
     )
     .map_err(|error| format!("无法写入 Git 属性配置：{error}"))?;
     let manifest_path = metadata_root.join("manifest.json");
@@ -93,6 +93,7 @@ pub fn publish_files(
     }
 
     repository.stage_all()?;
+    validate_staged_manifest(&repository, &manifest)?;
     if !repository.has_staged_changes()? {
         state.last_error = None;
         state.last_remote_commit = remote_before;
@@ -1065,8 +1066,11 @@ fn materialize_commit_files(
 ) -> Result<(), String> {
     validate_manifest_metadata(manifest)?;
     let files_root = repository.root().join("files");
-    remove_managed_target(&files_root, true)?;
-    fs::create_dir_all(&files_root).map_err(|error| format!("无法重建内部文件目录：{error}"))?;
+    let materialized_root = repository
+        .root()
+        .join(format!(".gitsynctools-materialize-{}", Uuid::new_v4()));
+    fs::create_dir_all(&materialized_root)
+        .map_err(|error| format!("无法创建内部文件临时目录：{error}"))?;
 
     let mut directories: Vec<&ManifestEntry> = manifest
         .entries
@@ -1075,25 +1079,47 @@ fn materialize_commit_files(
         .collect();
     directories.sort_by_key(|entry| path_depth(&entry.path));
     for entry in directories {
-        let target = safe_join(&files_root, &entry.path)?;
+        let target = safe_join(&materialized_root, &entry.path)?;
         fs::create_dir_all(&target).map_err(|error| format!("无法重建内部目录：{error}"))?;
     }
 
-    for entry in manifest
+    let materialize_result = manifest
         .entries
         .iter()
         .filter(|entry| entry.kind == ManifestKind::File)
-    {
-        let object_path = format!("files/{}", entry.path);
-        let bytes = repository.read_blob(commit, &object_path)?;
-        let actual_hash = hash_bytes(&bytes);
-        if bytes.len() as u64 != entry.size || Some(actual_hash.as_str()) != entry.sha256.as_deref()
-        {
-            return Err(format!("Git 对象与清单不一致：{}", entry.path));
-        }
-        let target = safe_join(&files_root, &entry.path)?;
-        atomic_write_bytes(&bytes, &target)?;
+        .try_for_each(|entry| -> Result<(), String> {
+            let object_path = format!("files/{}", entry.path);
+            let object_bytes = repository.read_blob(commit, &object_path)?;
+            let object_hash = hash_bytes(&object_bytes);
+            let bytes = if object_bytes.len() as u64 == entry.size
+                && Some(object_hash.as_str()) == entry.sha256.as_deref()
+            {
+                object_bytes
+            } else {
+                let checked_out = safe_join(&files_root, &entry.path)?;
+                reject_link(&checked_out)?;
+                let checked_out_bytes = fs::read(&checked_out)
+                    .map_err(|_| format!("Git 对象与清单不一致：{}", entry.path))?;
+                let checked_out_hash = hash_bytes(&checked_out_bytes);
+                if checked_out_bytes.len() as u64 != entry.size
+                    || Some(checked_out_hash.as_str()) != entry.sha256.as_deref()
+                {
+                    return Err(format!("Git 对象与清单不一致：{}", entry.path));
+                }
+                checked_out_bytes
+            };
+            let target = safe_join(&materialized_root, &entry.path)?;
+            atomic_write_bytes(&bytes, &target)?;
+            Ok(())
+        });
+    if let Err(error) = materialize_result {
+        let _ = fs::remove_dir_all(&materialized_root);
+        return Err(error);
     }
+
+    remove_managed_target(&files_root, true)?;
+    fs::rename(&materialized_root, &files_root)
+        .map_err(|error| format!("无法替换内部文件目录：{error}"))?;
     Ok(())
 }
 
@@ -1121,6 +1147,26 @@ fn validate_manifest(manifest: &Manifest, files_root: &Path) -> Result<(), Strin
                 entry.size,
                 actual_hash,
                 entry.sha256.as_deref().unwrap_or("missing")
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_staged_manifest(repository: &GitRepository, manifest: &Manifest) -> Result<(), String> {
+    validate_manifest_metadata(manifest)?;
+    for entry in manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == ManifestKind::File)
+    {
+        let bytes = repository.read_staged_blob(&format!("files/{}", entry.path))?;
+        let actual_hash = hash_bytes(&bytes);
+        if bytes.len() as u64 != entry.size || Some(actual_hash.as_str()) != entry.sha256.as_deref()
+        {
+            return Err(format!(
+                "Git 暂存对象与原文件不一致：{}。请检查全局 Git attributes 或 clean filter 配置",
+                entry.path
             ));
         }
     }
@@ -1407,6 +1453,111 @@ mod tests {
         assert_eq!(
             local_difference(&path, &applied).unwrap(),
             Some(ConflictKind::LocalModified)
+        );
+    }
+
+    #[test]
+    fn publish_disables_user_clean_filters_for_synced_files() {
+        let temp = tempdir().unwrap();
+        let remote = temp.path().join("remote.git");
+        let init = Command::new("git")
+            .args(["init", "--bare", "--initial-branch=main"])
+            .arg(&remote)
+            .output()
+            .unwrap();
+        assert!(init.status.success());
+
+        let runtime = runtime(&temp.path().join("sender-data"));
+        fs::create_dir_all(&runtime.root).unwrap();
+        let config = AppConfig {
+            repository_url: remote.to_string_lossy().into_owned(),
+            branch: "main".into(),
+            role: DeviceRole::Sender,
+            destination: None,
+        };
+        let repository = GitRepository::new(runtime.repository.clone(), &config).unwrap();
+        repository.ensure().unwrap();
+
+        let attributes = temp.path().join("user-attributes");
+        fs::write(&attributes, "*.docx filter=mutate\n").unwrap();
+        for args in [
+            vec![
+                "config".to_string(),
+                "core.attributesFile".into(),
+                attributes.to_string_lossy().into_owned(),
+            ],
+            vec![
+                "config".into(),
+                "filter.mutate.clean".into(),
+                "git hash-object --stdin".into(),
+            ],
+            vec!["config".into(), "filter.mutate.smudge".into(), "cat".into()],
+        ] {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&runtime.repository)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+        }
+
+        let source = temp.path().join("document.docx");
+        let contents = b"PK\x03\x04office document bytes\r\n";
+        fs::write(&source, contents).unwrap();
+        let result =
+            publish_files(&runtime, &config, &mut LocalState::default(), vec![source]).unwrap();
+        let committed = repository
+            .read_blob(result.commit.as_deref().unwrap(), "files/document.docx")
+            .unwrap();
+        assert_eq!(committed, contents);
+    }
+
+    #[test]
+    fn materialize_uses_verified_smudged_file_for_legacy_filtered_commit() {
+        let temp = tempdir().unwrap();
+        let remote = temp.path().join("remote.git");
+        let init = Command::new("git")
+            .args(["init", "--bare", "--initial-branch=main"])
+            .arg(&remote)
+            .output()
+            .unwrap();
+        assert!(init.status.success());
+
+        let runtime = runtime(&temp.path().join("receiver-data"));
+        fs::create_dir_all(&runtime.root).unwrap();
+        let config = AppConfig {
+            repository_url: remote.to_string_lossy().into_owned(),
+            branch: "main".into(),
+            role: DeviceRole::Receiver,
+            destination: Some(temp.path().join("destination")),
+        };
+        let repository = GitRepository::new(runtime.repository.clone(), &config).unwrap();
+        repository.ensure().unwrap();
+
+        let original = b"PK\x03\x04original office document";
+        let desired = temp.path().join("desired");
+        fs::create_dir_all(&desired).unwrap();
+        fs::write(desired.join("document.docx"), original).unwrap();
+        let manifest = build_manifest(&desired, None).unwrap();
+
+        let files_root = runtime.repository.join("files");
+        fs::create_dir_all(&files_root).unwrap();
+        fs::write(
+            files_root.join("document.docx"),
+            b"version https://git-lfs.github.com/spec/v1\n",
+        )
+        .unwrap();
+        let metadata_root = runtime.repository.join(".filesync");
+        fs::create_dir_all(&metadata_root).unwrap();
+        write_json_atomic(&metadata_root.join("manifest.json"), &manifest).unwrap();
+        repository.stage_all().unwrap();
+        let commit = repository.commit("Legacy filtered commit").unwrap();
+
+        fs::write(files_root.join("document.docx"), original).unwrap();
+        materialize_commit_files(&repository, &commit, &manifest).unwrap();
+        assert_eq!(
+            fs::read(files_root.join("document.docx")).unwrap(),
+            original
         );
     }
 

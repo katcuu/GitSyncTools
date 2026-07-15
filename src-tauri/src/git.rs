@@ -219,6 +219,16 @@ impl GitRepository {
         }
     }
 
+    pub fn read_staged_blob(&self, path: &str) -> Result<Vec<u8>, String> {
+        let object = format!(":{path}");
+        let output = self.run_raw(["show", "--no-textconv", object.as_str()])?;
+        if output.status.success() {
+            Ok(output.stdout)
+        } else {
+            Err(command_error(&output, &self.remote_url))
+        }
+    }
+
     pub fn list_tree_files(&self, commit: &str) -> Result<Vec<GitTreeFile>, String> {
         let output = self.run_raw(["ls-tree", "-r", "-l", "-z", "--full-tree", commit, "--"])?;
         if !output.status.success() {

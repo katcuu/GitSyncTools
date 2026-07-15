@@ -1,7 +1,7 @@
 # GitSyncTools
 
 [![CI](https://github.com/katcuu/GitSyncTools/actions/workflows/ci.yml/badge.svg)](https://github.com/katcuu/GitSyncTools/actions/workflows/ci.yml)
-[![release](https://img.shields.io/badge/release-v0.3.7-176b4f)](https://github.com/katcuu/GitSyncTools/releases)
+[![release](https://img.shields.io/badge/release-v0.3.8-176b4f)](https://github.com/katcuu/GitSyncTools/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 GitSyncTools 是一个基于 Git 仓库的轻量级单向文件同步工具。Windows 发送端负责选择并发布文件，macOS 接收端负责把远端内容更新到固定目录。应用隐藏了 `commit`、`push`、`pull` 等 Git 细节，日常操作只需要“选择文件并同步”或“立即更新”。
@@ -18,7 +18,7 @@ GitSyncTools 是一个基于 Git 仓库的轻量级单向文件同步工具。Wi
 - 展示仓库中的文件数量、目录数量、总大小、路径和更新时间。
 - Windows 发送端和 macOS 接收端的仓库文件列表均支持多选、全选，并可批量删除同步文件或仓库原有文件。
 - 网络中断时保留待推送提交，支持后续重试。
-- 关闭主窗口后驻留系统托盘。
+- 关闭主窗口后驻留系统托盘；Windows 和 macOS 均可从托盘右键菜单选择“同步”。发送端会刷新仓库信息，接收端会拉取并应用最新内容，遇到冲突时自动打开主窗口。
 - 支持基于 GitHub Release 的签名更新包检测、下载和安装。
 - 拒绝路径穿越、符号链接、Windows junction、损坏清单和超过 50 MB 的单文件。
 

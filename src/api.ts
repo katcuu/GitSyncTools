@@ -9,7 +9,7 @@ function previewStatus(): SyncStatus {
   return {
     configured: previewConfig !== null,
     platform: "windows",
-    appVersion: "0.3.7",
+    appVersion: "0.3.8",
     config: previewConfig,
     phase: "idle",
     repositoryLoading: false,

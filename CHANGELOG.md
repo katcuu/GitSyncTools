@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-07-15
+
+### 新增
+
+- Windows 和 macOS 系统托盘右键菜单增加“同步”：发送端刷新仓库，接收端无冲突时直接应用更新。
+
+### 修复
+
+- 同步文件强制按二进制存储并禁用用户级 Git clean filter，修复 Office 文档的 Git 对象与清单 SHA-256 不一致导致 macOS 无法更新的问题。
+- 提交前校验暂存区 Git 对象与清单，发现外部 attributes/filter 仍在改写文件时阻止上传，避免生成不可用提交。
+
 ## [0.3.7] - 2026-07-15
 
 ### 新增
@@ -120,5 +131,6 @@
 - Windows 发送端和 macOS 接收端的基础单向文件同步。
 - 文件清单、冲突检测、待推送重试和资源管理器右键入口。
 
-[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/katcuu/GitSyncTools/compare/v0.3.8...HEAD
+[0.3.8]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.8
 [0.3.7]: https://github.com/katcuu/GitSyncTools/releases/tag/v0.3.7

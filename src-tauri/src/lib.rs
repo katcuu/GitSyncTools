@@ -35,9 +35,11 @@ fn show_main(app: &AppHandle) {
 fn create_tray(app: &tauri::App) -> Result<(), String> {
     let show = MenuItem::with_id(app, "show", "打开 GitSyncTools", true, None::<&str>)
         .map_err(|error| format!("无法创建托盘菜单项：{error}"))?;
+    let sync = MenuItem::with_id(app, "sync", "同步", true, None::<&str>)
+        .map_err(|error| format!("无法创建托盘菜单项：{error}"))?;
     let quit = MenuItem::with_id(app, "quit", "退出 GitSyncTools", true, None::<&str>)
         .map_err(|error| format!("无法创建托盘菜单项：{error}"))?;
-    let menu = Menu::with_items(app, &[&show, &quit])
+    let menu = Menu::with_items(app, &[&show, &sync, &quit])
         .map_err(|error| format!("无法创建托盘菜单：{error}"))?;
     let mut tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
@@ -45,6 +47,7 @@ fn create_tray(app: &tauri::App) -> Result<(), String> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main(app),
+            "sync" => handle_tray_sync(app.clone()),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -69,6 +72,32 @@ fn create_tray(app: &tauri::App) -> Result<(), String> {
     tray.build(app)
         .map_err(|error| format!("无法创建托盘图标：{error}"))?;
     Ok(())
+}
+
+fn notify(app: &AppHandle, title: &str, body: impl Into<String>) {
+    let _ = app
+        .notification()
+        .builder()
+        .title(title)
+        .body(body.into())
+        .show();
+}
+
+fn handle_tray_sync(app: AppHandle) {
+    std::thread::spawn(move || match commands::sync_from_tray(&app) {
+        Ok(commands::TraySyncOutcome::Completed(message)) => {
+            notify(&app, "GitSyncTools", message);
+        }
+        Ok(commands::TraySyncOutcome::NeedsAttention(message)) => {
+            notify(&app, "GitSyncTools 需要处理", message);
+            show_main(&app);
+        }
+        Err(error) => {
+            let summary: String = error.chars().take(160).collect();
+            notify(&app, "GitSyncTools 同步失败", summary);
+            show_main(&app);
+        }
+    });
 }
 
 fn handle_context_publish(app: AppHandle, paths: Vec<PathBuf>) {

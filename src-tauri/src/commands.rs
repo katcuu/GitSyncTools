@@ -26,6 +26,11 @@ pub struct AppState {
     validation_cache: Mutex<Option<CachedRemote>>,
 }
 
+pub enum TraySyncOutcome {
+    Completed(String),
+    NeedsAttention(String),
+}
+
 #[derive(Clone)]
 struct CachedRemote {
     repository_url: String,
@@ -408,6 +413,53 @@ pub fn publish_for_context(app: &AppHandle, paths: Vec<PathBuf>) -> Result<Publi
         .lock()
         .map_err(|_| "同步状态锁已损坏".to_string())?;
     publish_locked(app, paths)
+}
+
+pub fn sync_from_tray(app: &AppHandle) -> Result<TraySyncOutcome, String> {
+    let shared = app.state::<AppState>();
+    let _operation = shared
+        .operation
+        .lock()
+        .map_err(|_| "同步状态锁已损坏".to_string())?;
+    let runtime = RuntimePaths::from_app(app)?;
+    let config = required_config(&runtime)?;
+    let mut local = load_state(&runtime)?;
+    let result = (|| -> Result<TraySyncOutcome, String> {
+        match config.role {
+            DeviceRole::Sender => refresh_repository_snapshot(&runtime, &config, &mut local)
+                .map(|_| TraySyncOutcome::Completed("仓库信息已更新".into())),
+            DeviceRole::Receiver => {
+                let plan = prepare_pull_plan(&runtime, &config, &mut local)?;
+                if !plan.conflicts.is_empty() {
+                    Ok(TraySyncOutcome::NeedsAttention(format!(
+                        "检测到 {} 个本地文件冲突，请在主窗口处理",
+                        plan.conflicts.len()
+                    )))
+                } else if let Some(commit) = plan.commit.as_deref() {
+                    apply_pull_plan(&runtime, &config, &mut local, commit, &[])?;
+                    let message = if plan.changes.is_empty() {
+                        "已是最新版本"
+                    } else {
+                        "接收目录已更新"
+                    };
+                    Ok(TraySyncOutcome::Completed(message.into()))
+                } else {
+                    Ok(TraySyncOutcome::Completed(plan.message))
+                }
+            }
+        }
+    })();
+    match result {
+        Ok(outcome) => {
+            let _ = app.emit("sync-status-updated", ());
+            Ok(outcome)
+        }
+        Err(error) => {
+            remember_error(&runtime, &config, &mut local, &error);
+            let _ = app.emit("sync-status-updated", ());
+            Err(error)
+        }
+    }
 }
 
 fn publish_locked(app: &AppHandle, paths: Vec<PathBuf>) -> Result<PublishResult, String> {
