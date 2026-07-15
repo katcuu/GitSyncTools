@@ -94,7 +94,7 @@ pub fn publish_files(
     .map_err(|error| format!("无法写入 Git 属性配置：{error}"))?;
     let manifest_path = metadata_root.join("manifest.json");
     let old_manifest: Option<Manifest> = read_optional_json(&manifest_path)?;
-    let manifest = build_manifest(&files_root, old_manifest.as_ref())?;
+    let mut manifest = build_manifest(&files_root, old_manifest.as_ref())?;
     write_json_atomic(&manifest_path, &manifest)?;
 
     let repository_path = metadata_root.join("repository.json");
@@ -109,7 +109,11 @@ pub fn publish_files(
     }
 
     repository.stage_all()?;
-    validate_staged_manifest(&repository, &manifest)?;
+    if validate_or_repair_staged_manifest(&repository, &mut manifest, &sources)? {
+        write_json_atomic(&manifest_path, &manifest)?;
+        repository.stage_paths(&[".filesync/manifest.json".into()])?;
+        validate_or_repair_staged_manifest(&repository, &mut manifest, &sources)?;
+    }
     if !repository.has_staged_changes()? {
         state.last_error = None;
         state.last_remote_commit = remote_before;
@@ -1270,24 +1274,80 @@ fn validate_manifest(manifest: &Manifest, files_root: &Path) -> Result<(), Strin
     Ok(())
 }
 
-fn validate_staged_manifest(repository: &GitRepository, manifest: &Manifest) -> Result<(), String> {
+fn validate_or_repair_staged_manifest(
+    repository: &GitRepository,
+    manifest: &mut Manifest,
+    sources: &[ValidatedSource],
+) -> Result<bool, String> {
     validate_manifest_metadata(manifest)?;
+    let mut repaired = false;
     for entry in manifest
         .entries
-        .iter()
+        .iter_mut()
         .filter(|entry| entry.kind == ManifestKind::File)
     {
-        let bytes = repository.read_staged_blob(&format!("files/{}", entry.path))?;
-        let actual_hash = hash_bytes(&bytes);
-        if bytes.len() as u64 != entry.size || Some(actual_hash.as_str()) != entry.sha256.as_deref()
+        let repository_path = format!("files/{}", entry.path);
+        let staged = repository.read_staged_blob(&repository_path)?;
+        let staged_hash = hash_bytes(&staged);
+        if staged.len() as u64 == entry.size
+            && Some(staged_hash.as_str()) == entry.sha256.as_deref()
         {
+            continue;
+        }
+        log::warn!(
+            "operation=staged_manifest_mismatch path={} expected_size={} expected_sha256={} staged_size={} staged_sha256={}",
+            entry.path,
+            entry.size,
+            entry.sha256.as_deref().unwrap_or("missing"),
+            staged.len(),
+            staged_hash
+        );
+        let Some(source_path) = selected_source_path(&entry.path, sources) else {
             return Err(format!(
-                "Git 暂存对象与原文件不一致：{}。请检查全局 Git attributes 或 clean filter 配置",
+                "Git 暂存对象与原文件不一致：{}，且本次没有选择对应源文件",
                 entry.path
             ));
+        };
+        reject_link(&source_path)?;
+        let source = fs::read(&source_path)
+            .map_err(|error| format!("无法重新读取所选源文件 {}：{error}", entry.path))?;
+        if source.len() as u64 > MAX_FILE_SIZE {
+            return Err(format!("{} 超过 50MB 限制", entry.path));
         }
+        let source_hash = hash_bytes(&source);
+        repository.stage_raw_blob(&repository_path, &source)?;
+        let repaired_blob = repository.read_staged_blob(&repository_path)?;
+        if repaired_blob != source {
+            return Err(format!("无法将源文件原始字节写入 Git 索引：{}", entry.path));
+        }
+        entry.size = source.len() as u64;
+        entry.sha256 = Some(source_hash.clone());
+        entry.updated_at = Utc::now().to_rfc3339();
+        repaired = true;
+        log::info!(
+            "operation=staged_manifest_mismatch path={} recovery=raw_git_object_success source_size={} source_sha256={}",
+            entry.path,
+            source.len(),
+            source_hash
+        );
     }
-    Ok(())
+    Ok(repaired)
+}
+
+fn selected_source_path(path: &str, sources: &[ValidatedSource]) -> Option<PathBuf> {
+    let mut parts = path.split('/');
+    let root = parts.next()?;
+    let source = sources
+        .iter()
+        .find(|source| source.name.to_lowercase() == root.to_lowercase())?;
+    if source.source.is_file() {
+        return parts.next().is_none().then(|| source.source.clone());
+    }
+    let mut selected = source.source.clone();
+    for part in parts {
+        selected.push(part);
+    }
+    Some(selected)
 }
 
 fn parse_lfs_pointer(bytes: &[u8]) -> Option<LfsPointer> {
@@ -1614,7 +1674,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_disables_user_clean_filters_for_synced_files() {
+    fn publish_bypasses_high_priority_clean_filter_for_selected_source() {
         let temp = tempdir().unwrap();
         let remote = temp.path().join("remote.git");
         let init = Command::new("git")
@@ -1635,16 +1695,14 @@ mod tests {
         let repository = GitRepository::new(runtime.repository.clone(), &config).unwrap();
         repository.ensure().unwrap();
 
-        let attributes = temp.path().join("user-attributes");
-        fs::write(&attributes, "*.docx filter=mutate\n").unwrap();
+        fs::write(
+            runtime.repository.join(".git/info/attributes"),
+            "*.docx filter=mutate\n",
+        )
+        .unwrap();
         for args in [
             vec![
                 "config".to_string(),
-                "core.attributesFile".into(),
-                attributes.to_string_lossy().into_owned(),
-            ],
-            vec![
-                "config".into(),
                 "filter.mutate.clean".into(),
                 "git hash-object --stdin".into(),
             ],

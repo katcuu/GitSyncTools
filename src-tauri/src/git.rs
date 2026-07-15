@@ -262,6 +262,30 @@ impl GitRepository {
         )
     }
 
+    pub fn stage_raw_blob(&self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        let object = run_git_with_input(
+            Some(&self.root),
+            ["hash-object", "-w", "--stdin"],
+            bytes,
+            &self.remote_url,
+        )?;
+        let object =
+            String::from_utf8(object).map_err(|_| "Git 返回了无效的对象编号".to_string())?;
+        let object = object.trim();
+        if object.len() != 40 || !object.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("Git 返回了无效的对象编号".into());
+        }
+        self.run([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "100644",
+            object,
+            path,
+        ])?;
+        Ok(())
+    }
+
     pub fn list_tree_files(&self, commit: &str) -> Result<Vec<GitTreeFile>, String> {
         let output = self.run_raw(["ls-tree", "-r", "-l", "-z", "--full-tree", commit, "--"])?;
         if !output.status.success() {
